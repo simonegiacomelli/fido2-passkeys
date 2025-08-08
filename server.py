@@ -17,14 +17,14 @@ def b64ud(s: str) -> bytes:
 
 RP_ID = os.getenv("RP_ID", "localhost")
 RP_NAME = os.getenv("RP_NAME", "Passkey Demo")
-ALLOWED_ORIGINS = set(
-    [o.strip() for o in os.getenv("ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()])
+ALLOWED_ORIGINS = {o.strip() for o in os.getenv("ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if
+                   o.strip()}
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(32)))
 
-rp = PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME)
-server = Fido2Server(rp, attestation="none", verify_origin=lambda origin: origin in ALLOWED_ORIGINS)
+server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attestation="none",
+                     verify_origin=lambda o: o in ALLOWED_ORIGINS)
 
 USERS: Dict[str, Dict[str, Any]] = {}
 
@@ -35,8 +35,8 @@ def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, 
         u = {"id": secrets.token_bytes(16), "name": username, "displayName": display_name or username,
              "credentials": []}
         USERS[username] = u
-    else:
-        if display_name: u["displayName"] = display_name
+    elif display_name:
+        u["displayName"] = display_name
     return u
 
 
@@ -47,6 +47,18 @@ def find_user_by_cred_id(cred_id: bytes) -> Optional[str]:
     return None
 
 
+def pk_descriptors(u: Dict[str, Any]):
+    return [PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in
+            u["credentials"]]
+
+
+def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
+    for c in u["credentials"]:
+        if c["id"] == cred_id:
+            c["sign_count"] = max(c.get("sign_count", 0), counter)
+            return
+
+
 @app.post("/webauthn/register/options")
 async def register_options(req: Request):
     body = await req.json()
@@ -54,11 +66,8 @@ async def register_options(req: Request):
     display_name = (body.get("displayName") or "").strip() or None
     if not username: raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
-    descriptors = [PublicKeyCredentialDescriptor(
-        type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in u["credentials"]]
-
     opts, state = server.register_begin(
-        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), descriptors,
+        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), pk_descriptors(u),
         user_verification=PREFERRED, resident_key_requirement=PREFERRED)
     req.session["reg"] = {"u": username, "state": state}
     return JSONResponse(dict(opts))
@@ -87,8 +96,7 @@ async def authenticate_options(req: Request):
     if username:
         u = USERS.get(username)
         if not u: raise HTTPException(404, "unknown user")
-        descriptors = [PublicKeyCredentialDescriptor(
-            type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in u["credentials"]]
+        descriptors = pk_descriptors(u)
     opts, state = server.authenticate_begin(descriptors, user_verification=PREFERRED)
     req.session["auth"] = {"state": state}
     return JSONResponse(dict(opts))
@@ -106,10 +114,7 @@ async def authenticate_verify(req: Request):
     u = USERS[uname]
     server.authenticate_complete(st["state"], [c["data"] for c in u["credentials"]], cred)
     ad = AuthenticatorData(b64ud(cred["response"]["authenticatorData"]))
-    for c in u["credentials"]:
-        if c["id"] == raw_id:
-            c["sign_count"] = max(c.get("sign_count", 0), ad.counter)
-            break
+    update_counter(u, raw_id, ad.counter)
     req.session.pop("auth", None)
     return JSONResponse({"ok": True, "username": uname})
 
@@ -127,6 +132,7 @@ async def index():
 
 
 if __name__ == "__main__":
+    print('http://localhost:8000 <- use localhost otherwise the browser will not allow the request')
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
