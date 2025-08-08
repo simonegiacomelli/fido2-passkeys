@@ -118,7 +118,7 @@
 </div>
 <script>
     const l = (...a) => {
-        log.textContent = [new Date().toLocaleTimeString(), ...a].join(" ") + "\n" + log.textContent
+        log.textContent = log.textContent + [new Date().toLocaleTimeString(), ...a].join(" ") + "\n"
     }
     const qs = s => document.querySelector(s)
     const usernameEl = qs('#username')

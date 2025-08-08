@@ -48,7 +48,7 @@ async def register_options(req: Request):
     descriptors = [PublicKeyCredentialDescriptor(id=c["id"]) for c in u["credentials"]]
     opts, state = server.register_begin(PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), descriptors, user_verification="preferred", resident_key_requirement="preferred")
     req.session["reg"] = {"u": username, "state": state}
-    return JSONResponse(opts.to_json())
+    return JSONResponse(dict(opts))
 
 @app.post("/webauthn/register/verify")
 async def register_verify(req: Request):
@@ -74,7 +74,7 @@ async def authenticate_options(req: Request):
         descriptors = [PublicKeyCredentialDescriptor(id=c["id"]) for c in u["credentials"]]
     opts, state = server.authenticate_begin(descriptors, user_verification="preferred")
     req.session["auth"] = {"state": state}
-    return JSONResponse(opts.to_json())
+    return JSONResponse(dict(opts))
 
 @app.post("/webauthn/authenticate/verify")
 async def authenticate_verify(req: Request):
@@ -90,7 +90,7 @@ async def authenticate_verify(req: Request):
     ad = AuthenticatorData(b64ud(cred["response"]["authenticatorData"]))
     for c in u["credentials"]:
         if c["id"] == raw_id:
-            c["sign_count"] = max(c.get("sign_count", 0), ad.sign_count)
+            c["sign_count"] = max(c.get("sign_count", 0), ad.counter)
             break
     req.session.pop("auth", None)
     return JSONResponse({"ok": True, "username": uname})
