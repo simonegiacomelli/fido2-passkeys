@@ -1,0 +1,68 @@
+# fido2-passkeys
+
+Minimal, self-contained demo of passkeys (WebAuthn) using FastAPI + `fido2`.
+It serves a static `index.html` and exposes the WebAuthn endpoints a real backend would provide.
+Data is persisted to a simple pickle file.
+
+## What’s inside
+
+```
+.
+├── server.py         # FastAPI backend (registration + authentication)
+├── index.html        # Minimal client (create/sign-in with passkeys)
+└── requirements.txt  # Dependencies
+```
+
+## Quick start
+
+```bash
+uv venv
+uv pip install -r requirements.txt
+uv run server.py
+```
+
+Open:
+[http://localhost:8000](http://localhost:8000)
+
+Notes:
+
+* Use **localhost** (not 127.0.0.1). WebAuthn rejects IPs for RP ID.
+* Optional: `export SESSION_SECRET=<any-random-string>`
+* Optional: `export DB_FILE=/path/to/users.pickle` (default: `./users.pickle`)
+
+## How it works
+
+* **Registration**
+
+    * `POST /webauthn/register/options`
+    * `POST /webauthn/register/verify`
+* **Authentication**
+
+    * `POST /webauthn/authenticate/options`
+    * `POST /webauthn/authenticate/verify`
+* **Health**
+
+    * `GET /health`
+* **UI**
+
+    * `GET /` → serves `index.html`
+
+The server validates challenges and origins, stores credential data, and updates signature counters.
+
+## Persistence
+
+* Simple file persistence via `pickle` (default `users.pickle`).
+* This is for demos/tests only. For production, use a real database and proper schemas.
+
+## Intended use
+
+* Local development and experimentation with passkeys/WebAuthn.
+* A starting point to integrate passkeys into your own stack by replacing the storage layer and tightening security.
+
+## Production checklist (non-exhaustive)
+
+* Real domain and HTTPS
+* Strong session management and CSRF protections where applicable
+* Robust origin/RP ID configuration
+* Database storage and migrations
+* Auditing, logging, and rate limiting
