@@ -134,6 +134,5 @@ async def index():
     return FileResponse(path, media_type="text/html")
 
 if __name__ == "__main__":
-    print('http://localhost:8000 <- use localhost otherwise the browser will not allow the request')
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="localhost", port=8000)
