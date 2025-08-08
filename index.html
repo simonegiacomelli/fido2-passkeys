@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Passkey Demo</title>
+<style>
+    :root {
+        --bg: #0b0c10;
+        --fg: #eef1f5;
+        --muted: #a9b0bb;
+        --accent: #5ad8a1;
+        --card: #14161c
+    }
+
+    * {
+        box-sizing: border-box
+    }
+
+    body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.4 system-ui, Segoe UI, Roboto, Ubuntu, Helvetica, Arial
+    }
+
+    .wrap {
+        max-width: 780px;
+        margin: 40px auto;
+        padding: 24px;
+        background: var(--card);
+        border-radius: 14px
+    }
+
+    h1 {
+        margin: 0 0 14px;
+        font-size: 22px
+    }
+
+    .row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 8px 0
+    }
+
+    label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+        min-width: 220px
+    }
+
+    input {
+        padding: 10px;
+        border: 1px solid #2a2e37;
+        background: #0f1117;
+        color: var(--fg);
+        border-radius: 10px;
+        outline: none
+    }
+
+    button {
+        cursor: pointer;
+        border: 0;
+        border-radius: 12px;
+        padding: 10px 14px;
+        background: var(--accent);
+        color: #082017;
+        font-weight: 600
+    }
+
+    button.secondary {
+        background: #2f3645;
+        color: #cfd6e4
+    }
+
+    .log {
+        margin-top: 16px;
+        padding: 12px;
+        border: 1px dashed #2f3645;
+        border-radius: 12px;
+        white-space: pre-wrap;
+        background: #0f1117;
+        color: var(--muted);
+        min-height: 80px
+    }
+
+    .split {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap
+    }
+
+    .split > button {
+        flex: 1;
+        min-width: 180px
+    }
+</style>
+<div class="wrap">
+    <h1>Passkey Demo</h1>
+    <div class="row">
+        <label>Username
+            <input id="username" autocomplete="username webauthn" placeholder="alice@example.com">
+        </label>
+        <label>Display name
+            <input id="displayName" placeholder="Alice">
+        </label>
+    </div>
+    <div class="row split">
+        <button id="btnRegister">Create passkey</button>
+        <button id="btnSignin">Sign in with username</button>
+        <button id="btnSigninDiscover" class="secondary">Sign in without username</button>
+    </div>
+    <div class="row">
+        <button id="btnCanIUse" class="secondary">Check device support</button>
+    </div>
+    <div id="log" class="log"></div>
+</div>
+<script>
+    const l = (...a) => {
+        log.textContent = [new Date().toLocaleTimeString(), ...a].join(" ") + "\n" + log.textContent
+    }
+    const qs = s => document.querySelector(s)
+    const usernameEl = qs('#username')
+    const displayNameEl = qs('#displayName')
+    const log = qs('#log')
+
+    const b64uToBuf = s => {
+        s = s.replace(/-/g, '+').replace(/_/g, '/')
+        const pad = s.length % 4 ? 4 - (s.length % 4) : 0
+        if (pad) s += '='.repeat(pad)
+        const str = atob(s)
+        const buf = new ArrayBuffer(str.length)
+        const view = new Uint8Array(buf)
+        for (let i = 0; i < str.length; i++) view[i] = str.charCodeAt(i)
+        return buf
+    }
+    const bufToB64u = buf => {
+        const bytes = new Uint8Array(buf)
+        let str = ''
+        for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i])
+        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    }
+
+    const postJSON = async (url, body) => {
+        const r = await fetch(url, {
+            method: 'POST',
+            headers: {'content-type': 'application/json'},
+            credentials: 'include',
+            body: JSON.stringify(body || {})
+        })
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+        return await r.json()
+    }
+
+    const prepareCreateOptions = o => {
+        o.publicKey.challenge = b64uToBuf(o.publicKey.challenge)
+        o.publicKey.user.id = b64uToBuf(o.publicKey.user.id)
+        if (o.publicKey.excludeCredentials)
+            o.publicKey.excludeCredentials = o.publicKey.excludeCredentials.map(c => ({...c, id: b64uToBuf(c.id)}))
+        return o.publicKey
+    }
+
+    const prepareGetOptions = o => {
+        o.publicKey.challenge = b64uToBuf(o.publicKey.challenge)
+        if (o.publicKey.allowCredentials)
+            o.publicKey.allowCredentials = o.publicKey.allowCredentials.map(c => ({...c, id: b64uToBuf(c.id)}))
+        return o.publicKey
+    }
+
+    const packAttestation = cred => {
+        const o = {
+            id: cred.id,
+            rawId: bufToB64u(cred.rawId),
+            type: cred.type,
+            authenticatorAttachment: cred.authenticatorAttachment || null,
+            response: {
+                clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+                attestationObject: bufToB64u(cred.response.attestationObject)
+            },
+            clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {}
+        }
+        if (cred.response.getTransports) o.response.transports = cred.response.getTransports()
+        return o
+    }
+
+    const packAssertion = cred => {
+        return {
+            id: cred.id,
+            rawId: bufToB64u(cred.rawId),
+            type: cred.type,
+            authenticatorAttachment: cred.authenticatorAttachment || null,
+            response: {
+                clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+                authenticatorData: bufToB64u(cred.response.authenticatorData),
+                signature: bufToB64u(cred.response.signature),
+                userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null
+            },
+            clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {}
+        }
+    }
+
+    const register = async () => {
+        const username = usernameEl.value.trim()
+        const displayName = displayNameEl.value.trim() || username
+        if (!username) return l('Username required')
+        l('Requesting registration options…')
+        const opts = await postJSON('/webauthn/register/options', {username, displayName})
+        const pubKey = prepareCreateOptions(opts)
+        l('Creating credential…')
+        const cred = await navigator.credentials.create({publicKey: pubKey})
+        const data = packAttestation(cred)
+        l('Sending attestation…')
+        const res = await postJSON('/webauthn/register/verify', {username, credential: data})
+        l('Server verification:', JSON.stringify(res))
+    }
+
+    const signin = async (withUsername) => {
+        const body = withUsername ? {username: usernameEl.value.trim()} : {}
+        l('Requesting authentication options…')
+        const opts = await postJSON('/webauthn/authenticate/options', body)
+        const pubKey = prepareGetOptions(opts)
+        const extra = {}
+        if (!withUsername) extra.mediation = 'optional'
+        l('Getting assertion…')
+        const cred = await navigator.credentials.get({publicKey: pubKey, ...extra})
+        const data = packAssertion(cred)
+        l('Sending assertion…')
+        const res = await postJSON('/webauthn/authenticate/verify', {credential: data})
+        l('Server verification:', JSON.stringify(res))
+    }
+
+    const canIUse = async () => {
+        if (!window.PublicKeyCredential) return l('WebAuthn not supported')
+        const a = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false)
+        const d = await PublicKeyCredential.isConditionalMediationAvailable?.().catch(() => false)
+        l(`Supported. Platform authenticator: ${a}. Conditional UI: ${!!d}.`)
+    }
+
+    qs('#btnRegister').addEventListener('click', async () => {
+        try {
+            await register()
+        } catch (e) {
+            l('Error:', e.message)
+        }
+    })
+    qs('#btnSignin').addEventListener('click', async () => {
+        try {
+            await signin(true)
+        } catch (e) {
+            l('Error:', e.message)
+        }
+    })
+    qs('#btnSigninDiscover').addEventListener('click', async () => {
+        try {
+            await signin(false)
+        } catch (e) {
+            l('Error:', e.message)
+        }
+    })
+    qs('#btnCanIUse').addEventListener('click', async () => {
+        try {
+            await canIUse()
+        } catch (e) {
+            l('Error:', e.message)
+        }
+    });
+
+    (async () => {
+        if (!window.PublicKeyCredential) l('WebAuthn not supported')
+    })()
+</script>
