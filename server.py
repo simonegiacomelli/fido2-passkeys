@@ -1,12 +1,13 @@
 import os, base64, secrets
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
-# from fastapi.responses import JSONResponse
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fido2.server import Fido2Server
 from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, PublicKeyCredentialDescriptor, \
-    AuthenticatorData, PublicKeyCredentialType
+    AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
+
+PREFERRED = UserVerificationRequirement.PREFERRED
 
 
 def b64ud(s: str) -> bytes:
@@ -53,10 +54,12 @@ async def register_options(req: Request):
     display_name = (body.get("displayName") or "").strip() or None
     if not username: raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
-    descriptors = [PublicKeyCredentialDescriptor(id=c["id"]) for c in u["credentials"]]
+    descriptors = [PublicKeyCredentialDescriptor(
+        type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in u["credentials"]]
+
     opts, state = server.register_begin(
         PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), descriptors,
-        user_verification="preferred", resident_key_requirement="preferred")
+        user_verification=PREFERRED, resident_key_requirement=PREFERRED)
     req.session["reg"] = {"u": username, "state": state}
     return JSONResponse(dict(opts))
 
@@ -86,7 +89,7 @@ async def authenticate_options(req: Request):
         if not u: raise HTTPException(404, "unknown user")
         descriptors = [PublicKeyCredentialDescriptor(
             type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in u["credentials"]]
-    opts, state = server.authenticate_begin(descriptors, user_verification="preferred")
+    opts, state = server.authenticate_begin(descriptors, user_verification=PREFERRED)
     req.session["auth"] = {"state": state}
     return JSONResponse(dict(opts))
 
