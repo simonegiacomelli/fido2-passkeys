@@ -2,7 +2,6 @@ import os, base64, secrets, pickle, threading
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
-from starlette.middleware.sessions import SessionMiddleware
 from fido2.server import Fido2Server
 from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, PublicKeyCredentialDescriptor, AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
 
@@ -17,7 +16,6 @@ RP_NAME = os.getenv("RP_NAME", "Passkey Demo")
 ALLOWED_ORIGINS = {o.strip() for o in os.getenv("ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()}
 
 app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(32)))
 
 server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attestation="none", verify_origin=lambda o: o in ALLOWED_ORIGINS)
 
@@ -30,8 +28,6 @@ def db_load():
     try:
         with open(DB_FILE, "rb") as f:
             USERS = pickle.load(f)
-    except FileNotFoundError:
-        USERS = {}
     except Exception:
         USERS = {}
 
@@ -68,6 +64,41 @@ def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
             c["sign_count"] = max(c.get("sign_count", 0), counter)
             return
 
+SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.pickle"))
+SESS_LOCK = threading.Lock()
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+def sess_load():
+    global SESSIONS
+    try:
+        with open(SESS_FILE, "rb") as f:
+            SESSIONS = pickle.load(f)
+    except Exception:
+        SESSIONS = {}
+
+def sess_save():
+    with SESS_LOCK:
+        tmp = SESS_FILE + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump(SESSIONS, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, SESS_FILE)
+
+sess_load()
+
+def get_session(req: Request) -> Dict[str, Any]:
+    sid = req.headers.get("id")
+    if not sid: raise HTTPException(401, "missing session id")
+    s = SESSIONS.get(sid)
+    if s is None: raise HTTPException(401, "invalid session id")
+    return s
+
+@app.post("/session/new")
+async def session_new():
+    sid = secrets.token_urlsafe(32)
+    SESSIONS[sid] = {}
+    sess_save()
+    return JSONResponse({"id": sid})
+
 @app.post("/webauthn/register/options")
 async def register_options(req: Request):
     body = await req.json()
@@ -76,7 +107,9 @@ async def register_options(req: Request):
     if not username: raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
     opts, state = server.register_begin(PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), pk_descriptors(u), user_verification=PREFERRED, resident_key_requirement=PREFERRED)
-    req.session["reg"] = {"u": username, "state": state}
+    s = get_session(req)
+    s["reg"] = {"u": username, "state": state}
+    sess_save()
     return JSONResponse(dict(opts))
 
 @app.post("/webauthn/register/verify")
@@ -84,12 +117,14 @@ async def register_verify(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip()
     cred = body.get("credential") or {}
-    st = req.session.get("reg")
+    s = get_session(req)
+    st = s.get("reg")
     if not st or st.get("u") != username: raise HTTPException(400, "registration state missing")
     res = server.register_complete(st["state"], cred)
     cd = res.credential_data
     USERS[username]["credentials"].append({"id": cd.credential_id, "data": cd, "sign_count": res.counter, "transports": cred.get("response", {}).get("transports") or []})
-    req.session.pop("reg", None)
+    s.pop("reg", None)
+    sess_save()
     db_save()
     return JSONResponse({"ok": True})
 
@@ -103,14 +138,17 @@ async def authenticate_options(req: Request):
         if not u: raise HTTPException(404, "unknown user")
         descriptors = pk_descriptors(u)
     opts, state = server.authenticate_begin(descriptors, user_verification=PREFERRED)
-    req.session["auth"] = {"state": state}
+    s = get_session(req)
+    s["auth"] = {"state": state}
+    sess_save()
     return JSONResponse(dict(opts))
 
 @app.post("/webauthn/authenticate/verify")
 async def authenticate_verify(req: Request):
     body = await req.json()
     cred = body.get("credential") or {}
-    st = req.session.get("auth")
+    s = get_session(req)
+    st = s.get("auth")
     if not st: raise HTTPException(400, "authentication state missing")
     raw_id = b64ud(cred.get("rawId") or cred.get("id"))
     uname = find_user_by_cred_id(raw_id)
@@ -119,7 +157,8 @@ async def authenticate_verify(req: Request):
     server.authenticate_complete(st["state"], [c["data"] for c in u["credentials"]], cred)
     ad = AuthenticatorData(b64ud(cred["response"]["authenticatorData"]))
     update_counter(u, raw_id, ad.counter)
-    req.session.pop("auth", None)
+    s.pop("auth", None)
+    sess_save()
     db_save()
     return JSONResponse({"ok": True, "username": uname})
 

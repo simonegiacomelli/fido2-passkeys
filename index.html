@@ -117,9 +117,7 @@
     <div id="log" class="log"></div>
 </div>
 <script>
-    const l = (...a) => {
-        log.textContent = log.textContent + [new Date().toLocaleTimeString(), ...a].join(" ") + "\n"
-    }
+    const l = (...a) => log.textContent = log.textContent + [new Date().toLocaleTimeString(), ...a].join(" ") + "\n"
     const qs = s => document.querySelector(s)
     const usernameEl = qs('#username')
     const displayNameEl = qs('#displayName')
@@ -142,10 +140,26 @@
         return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
     }
 
+    const ensureSession = async () => {
+        let id = localStorage.getItem('id')
+        if (!id) {
+            const r = await fetch('/session/new', {method: 'POST'})
+            if (!r.ok) throw new Error('cannot create session')
+            const data = await r.json()
+            id = data.id
+            localStorage.setItem('id', id)
+        }
+        return id
+    }
+
     const postJSON = async (url, body) => {
+        if (!localStorage.getItem('id')) await ensureSession()
         const r = await fetch(url, {
             method: 'POST',
-            headers: {'content-type': 'application/json'},
+            headers: {
+                'content-type': 'application/json',
+                'id': localStorage.getItem('id') || ''
+            },
             credentials: 'include',
             body: JSON.stringify(body || {})
         })
@@ -224,7 +238,7 @@
         l('Server verification:', JSON.stringify(res))
     }
 
-    const signin = async (withUsername) => {
+    const signin = async withUsername => {
         const body = withUsername ? {username: usernameEl.value.trim()} : {}
         l('Requesting authentication options…')
         const opts = await postJSON('/webauthn/authenticate/options', body)
@@ -273,9 +287,14 @@
         } catch (e) {
             l('Error:', e.message)
         }
-    });
+    })
 
-    (async () => {
+    ;(async () => {
+        try {
+            await ensureSession()
+        } catch (e) {
+            l('Error creating session:', e.message)
+        }
         if (!window.PublicKeyCredential) l('WebAuthn not supported')
     })()
 </script>
