@@ -1,4 +1,9 @@
 import json, base64
+import os
+import threading
+from pathlib import Path
+from typing import Dict, Any
+
 from fido2.webauthn import AttestedCredentialData
 from fido2.cose import CoseKey
 from fido2 import cbor
@@ -46,3 +51,28 @@ def dumps(o) -> str:
 
 def loads(s: str):
     return json.loads(s, object_hook=json_decode)
+
+
+class FileMap:
+    def __init__(self, path: str):
+        self.path = Path(path)
+        self.lock_m = threading.Lock()
+        try:
+            self.data = loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            self.data = {}
+
+    def _save(self):
+        tmp = Path(str(self.path) + ".tmp")
+        tmp.write_text(dumps(self.data), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def lock(self, fn):
+        with self.lock_m:
+            r = fn(self.data)
+            self._save()
+            return r
+
+    def read(self) -> Dict[str, Any]:
+        with self.lock_m:
+            return loads(dumps(self.data))

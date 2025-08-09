@@ -1,5 +1,4 @@
-import os, secrets, threading
-from pathlib import Path
+import os, secrets
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
@@ -8,31 +7,7 @@ from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserE
     AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
 
 import helper
-
-
-class FileMap:
-    def __init__(self, path: str):
-        self.path = Path(path)
-        self.lock_m = threading.Lock()
-        try:
-            self.data = helper.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            self.data = {}
-
-    def _save(self):
-        tmp = Path(str(self.path) + ".tmp")
-        tmp.write_text(helper.dumps(self.data), encoding="utf-8")
-        os.replace(tmp, self.path)
-
-    def lock(self, fn):
-        with self.lock_m:
-            r = fn(self.data)
-            self._save()
-            return r
-
-    def read(self) -> Dict[str, Any]:
-        with self.lock_m:
-            return helper.loads(helper.dumps(self.data))
+from helper import FileMap
 
 PREFERRED = UserVerificationRequirement.PREFERRED
 
