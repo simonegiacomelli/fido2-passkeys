@@ -27,8 +27,6 @@ Open:
 Notes:
 
 * Use **localhost** (not 127.0.0.1). WebAuthn rejects IPs for RP ID.
-* Optional: `export SESSION_SECRET=<any-random-string>`
-* Optional: `export DB_FILE=/path/to/users.pickle` (default: `./users.pickle`)
 
 ## How it works
 
@@ -48,7 +46,7 @@ The server validates challenges and origins, stores credential data, and updates
 
 ## Persistence
 
-* Simple file persistence via `pickle` (default `users.pickle`).
+* Simple file persistence via json.
 * This is for demos/tests only. For production, use a real database and proper schemas.
 
 ## Intended use
