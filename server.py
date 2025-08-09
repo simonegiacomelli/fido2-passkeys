@@ -49,7 +49,7 @@ db_load()
 def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, Any]:
     u = USERS.get(username)
     if not u:
-        u = {"id": secrets.token_bytes(16), "name": username, "displayName": display_name or username,
+        u = {"user_id": secrets.token_bytes(16), "name": username, "displayName": display_name or username,
              "credentials": []}
         USERS[username] = u
     elif display_name:
@@ -129,7 +129,7 @@ async def register_begin(req: Request):
         raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
     opts, state = server.register_begin(
-        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]),
+        PublicKeyCredentialUserEntity(name=u["name"], id=u["user_id"], display_name=u["displayName"]),
         pk_descriptors(u),
         user_verification=PREFERRED,
         resident_key_requirement=PREFERRED,
