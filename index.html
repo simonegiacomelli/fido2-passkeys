@@ -141,14 +141,11 @@
     }
 
     const ensureSession = async () => {
-        let id = localStorage.getItem('id')
-        if (!id) {
-            const r = await fetch('/session/new', {method: 'POST'})
-            if (!r.ok) throw new Error('cannot create session')
-            const data = await r.json()
-            id = data.id
-            localStorage.setItem('id', id)
-        }
+        const r = await fetch('/session/new', {method: 'POST'})
+        if (!r.ok) throw new Error('cannot create session')
+        const data = await r.json()
+        const id = data.id
+        localStorage.setItem('id', id)
         return id
     }
 

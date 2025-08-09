@@ -1,53 +1,65 @@
 import os, base64, secrets, pickle, threading
+from pathlib import Path
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fido2.server import Fido2Server
-from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, PublicKeyCredentialDescriptor, AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
+from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, PublicKeyCredentialDescriptor, \
+    AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
+
+import helper
 
 PREFERRED = UserVerificationRequirement.PREFERRED
+
 
 def b64ud(s: str) -> bytes:
     pad = "=" * (-len(s) % 4)
     return base64.urlsafe_b64decode((s + pad).encode())
 
+
 RP_ID = os.getenv("RP_ID", "localhost")
 RP_NAME = os.getenv("RP_NAME", "Passkey Demo")
-ALLOWED_ORIGINS = {o.strip() for o in os.getenv("ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()}
+ALLOWED_ORIGINS = {o.strip() for o in os.getenv("ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if
+                   o.strip()}
 
 app = FastAPI()
 
-server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attestation="none", verify_origin=lambda o: o in ALLOWED_ORIGINS)
+server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attestation="none",
+                     verify_origin=lambda o: o in ALLOWED_ORIGINS)
 
-DB_FILE = os.getenv("DB_FILE", os.path.join(os.path.dirname(__file__), "users.pickle"))
+DB_FILE = os.getenv("DB_FILE", os.path.join(os.path.dirname(__file__), "users.json"))
 DB_LOCK = threading.Lock()
 USERS: Dict[str, Dict[str, Any]] = {}
+
 
 def db_load():
     global USERS
     try:
-        with open(DB_FILE, "rb") as f:
-            USERS = pickle.load(f)
+        USERS = helper.loads(Path(DB_FILE).read_text(encoding="utf-8"))
     except Exception:
         USERS = {}
 
+
 def db_save():
     with DB_LOCK:
-        tmp = DB_FILE + ".tmp"
-        with open(tmp, "wb") as f:
-            pickle.dump(USERS, f, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp = Path(DB_FILE + ".tmp")
+        tmp.write_text(helper.dumps(USERS), encoding="utf-8")
         os.replace(tmp, DB_FILE)
 
+
 db_load()
+
 
 def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, Any]:
     u = USERS.get(username)
     if not u:
-        u = {"id": secrets.token_bytes(16), "name": username, "displayName": display_name or username, "credentials": []}
+        u = {"id": secrets.token_bytes(16), "name": username, "displayName": display_name or username,
+             "credentials": []}
         USERS[username] = u
     elif display_name:
         u["displayName"] = display_name
     return u
+
 
 def find_user_by_cred_id(cred_id: bytes) -> Optional[str]:
     for uname, u in USERS.items():
@@ -55,8 +67,11 @@ def find_user_by_cred_id(cred_id: bytes) -> Optional[str]:
             if c["id"] == cred_id: return uname
     return None
 
+
 def pk_descriptors(u: Dict[str, Any]):
-    return [PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in u["credentials"]]
+    return [PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in
+            u["credentials"]]
+
 
 def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
     for c in u["credentials"]:
@@ -64,9 +79,11 @@ def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
             c["sign_count"] = max(c.get("sign_count", 0), counter)
             return
 
+
 SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.pickle"))
 SESS_LOCK = threading.Lock()
 SESSIONS: Dict[str, Dict[str, Any]] = {}
+
 
 def sess_load():
     global SESSIONS
@@ -76,6 +93,7 @@ def sess_load():
     except Exception:
         SESSIONS = {}
 
+
 def sess_save():
     with SESS_LOCK:
         tmp = SESS_FILE + ".tmp"
@@ -83,7 +101,9 @@ def sess_save():
             pickle.dump(SESSIONS, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, SESS_FILE)
 
+
 sess_load()
+
 
 def get_session(req: Request) -> Dict[str, Any]:
     sid = req.headers.get("id")
@@ -92,12 +112,14 @@ def get_session(req: Request) -> Dict[str, Any]:
     if s is None: raise HTTPException(401, "invalid session id")
     return s
 
+
 @app.post("/session/new")
 async def session_new():
     sid = secrets.token_urlsafe(32)
     SESSIONS[sid] = {}
     sess_save()
     return JSONResponse({"id": sid})
+
 
 @app.post("/webauthn/register-begin")
 async def register_begin(req: Request):
@@ -106,11 +128,14 @@ async def register_begin(req: Request):
     display_name = (body.get("displayName") or "").strip() or None
     if not username: raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
-    opts, state = server.register_begin(PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), pk_descriptors(u), user_verification=PREFERRED, resident_key_requirement=PREFERRED)
+    opts, state = server.register_begin(
+        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), pk_descriptors(u),
+        user_verification=PREFERRED, resident_key_requirement=PREFERRED)
     s = get_session(req)
     s["reg"] = {"u": username, "state": state}
     sess_save()
     return JSONResponse(dict(opts))
+
 
 @app.post("/webauthn/register-complete")
 async def register_complete(req: Request):
@@ -122,11 +147,13 @@ async def register_complete(req: Request):
     if not st or st.get("u") != username: raise HTTPException(400, "registration state missing")
     res = server.register_complete(st["state"], cred)
     cd = res.credential_data
-    USERS[username]["credentials"].append({"id": cd.credential_id, "data": cd, "sign_count": res.counter, "transports": cred.get("response", {}).get("transports") or []})
+    USERS[username]["credentials"].append({"id": cd.credential_id, "data": cd, "sign_count": res.counter,
+                                           "transports": cred.get("response", {}).get("transports") or []})
     s.pop("reg", None)
     sess_save()
     db_save()
     return JSONResponse({"ok": True})
+
 
 @app.post("/webauthn/authenticate-begin")
 async def authenticate_begin(req: Request):
@@ -142,6 +169,7 @@ async def authenticate_begin(req: Request):
     s["auth"] = {"state": state}
     sess_save()
     return JSONResponse(dict(opts))
+
 
 @app.post("/webauthn/authenticate-complete")
 async def authenticate_complete(req: Request):
@@ -162,12 +190,15 @@ async def authenticate_complete(req: Request):
     db_save()
     return JSONResponse({"ok": True, "username": uname})
 
+
 @app.get("/", include_in_schema=False)
 async def index():
     path = os.path.join(os.path.dirname(__file__), "index.html")
     if not os.path.exists(path): raise HTTPException(404, "index.html not found")
     return FileResponse(path, media_type="text/html")
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="localhost", port=8000)
