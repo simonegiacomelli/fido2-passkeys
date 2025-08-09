@@ -1,17 +1,16 @@
-import os, secrets
+import os
+import secrets
 from typing import Dict, Any, Optional
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fido2.server import Fido2Server
 from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, PublicKeyCredentialDescriptor, \
     AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
 
-import helper
-from helper import FileMap
+from helper import FileMap, b64dec
 
 PREFERRED = UserVerificationRequirement.PREFERRED
-
-b64dec = helper.b64dec
 
 RP_ID = os.getenv("RP_ID", "localhost")
 RP_NAME = os.getenv("RP_NAME", "Passkey Demo")
