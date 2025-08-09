@@ -23,27 +23,27 @@ app = FastAPI()
 server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attestation="none",
                      verify_origin=lambda o: o in ALLOWED_ORIGINS)
 
-DB_FILE = os.getenv("DB_FILE", os.path.join(os.path.dirname(__file__), "users.json"))
-DB_LOCK = threading.Lock()
+USERS_FILE = os.getenv("USERS_FILE", os.path.join(os.path.dirname(__file__), "users.json"))
+USERS_LOCK = threading.Lock()
 USERS: Dict[str, Dict[str, Any]] = {}
 
 
-def db_load():
+def users_load():
     global USERS
     try:
-        USERS = helper.loads(Path(DB_FILE).read_text(encoding="utf-8"))
+        USERS = helper.loads(Path(USERS_FILE).read_text(encoding="utf-8"))
     except Exception:
         USERS = {}
 
 
-def db_save():
-    with DB_LOCK:
-        tmp = Path(DB_FILE + ".tmp")
+def users_save():
+    with USERS_LOCK:
+        tmp = Path(USERS_FILE + ".tmp")
         tmp.write_text(helper.dumps(USERS), encoding="utf-8")
-        os.replace(tmp, DB_FILE)
+        os.replace(tmp, USERS_FILE)
 
 
-db_load()
+users_load()
 
 
 def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, Any]:
@@ -158,7 +158,7 @@ async def register_complete(req: Request):
     })
     s.pop("reg", None)
     sess_save()
-    db_save()
+    users_save()
     return JSONResponse({"ok": True})
 
 
@@ -197,7 +197,7 @@ async def authenticate_complete(req: Request):
     update_counter(u, raw_id, ad.counter)
     s.pop("auth", None)
     sess_save()
-    db_save()
+    users_save()
     return JSONResponse({"ok": True, "username": uname})
 
 
