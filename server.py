@@ -1,4 +1,4 @@
-import os, secrets, pickle, threading
+import os, secrets, threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
@@ -8,6 +8,31 @@ from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserE
     AuthenticatorData, PublicKeyCredentialType, UserVerificationRequirement
 
 import helper
+
+
+class FileMap:
+    def __init__(self, path: str):
+        self.path = Path(path)
+        self.lock_m = threading.Lock()
+        try:
+            self.data = helper.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            self.data = {}
+
+    def _save(self):
+        tmp = Path(str(self.path) + ".tmp")
+        tmp.write_text(helper.dumps(self.data), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def lock(self, fn):
+        with self.lock_m:
+            r = fn(self.data)
+            self._save()
+            return r
+
+    def read(self) -> Dict[str, Any]:
+        with self.lock_m:
+            return helper.loads(helper.dumps(self.data))
 
 PREFERRED = UserVerificationRequirement.PREFERRED
 
@@ -24,41 +49,22 @@ server = Fido2Server(PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME), attest
                      verify_origin=lambda o: o in ALLOWED_ORIGINS)
 
 USERS_FILE = os.getenv("USERS_FILE", os.path.join(os.path.dirname(__file__), "users.json"))
-USERS_LOCK = threading.Lock()
-USERS: Dict[str, Dict[str, Any]] = {}
+SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.json"))
 
-
-def users_load():
-    global USERS
-    try:
-        USERS = helper.loads(Path(USERS_FILE).read_text(encoding="utf-8"))
-    except Exception:
-        USERS = {}
-
-
-def users_save():
-    with USERS_LOCK:
-        tmp = Path(USERS_FILE + ".tmp")
-        tmp.write_text(helper.dumps(USERS), encoding="utf-8")
-        os.replace(tmp, USERS_FILE)
-
-
-users_load()
+users = FileMap(USERS_FILE)
+sessions = FileMap(SESS_FILE)
 
 
 def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, Any]:
-    u = USERS.get(username)
-    if not u:
-        u = {"user_id": secrets.token_bytes(16), "name": username, "displayName": display_name or username,
-             "credentials": []}
-        USERS[username] = u
-    elif display_name:
-        u["displayName"] = display_name
-    return u
+    return users.lock(lambda m: m.setdefault(username, {"user_id": secrets.token_bytes(16), "name": username,
+                                                        "displayName": display_name or username,
+                                                        "credentials": []}) if username not in m else (m[
+                                                                                                           username].update(
+        {"displayName": display_name}) if display_name else None) or m[username])
 
 
 def find_user_by_cred_id(cred_id: bytes) -> Optional[str]:
-    for uname, u in USERS.items():
+    for uname, u in users.read().items():
         for c in u["credentials"]:
             if c["data"].credential_id == cred_id:
                 return uname
@@ -70,51 +76,25 @@ def pk_descriptors(u: Dict[str, Any]):
             u["credentials"]]
 
 
-def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
-    for c in u["credentials"]:
-        if c["data"].credential_id == cred_id:
-            c["sign_count"] = max(c.get("sign_count", 0), counter)
-            return
+def update_counter(uname: str, cred_id: bytes, counter: int):
+    users.lock(lambda m: next(
+        (c.update({"sign_count": max(c.get("sign_count", 0), counter)}) for c in m.get(uname, {}).get("credentials", [])
+         if c["data"].credential_id == cred_id), None))
 
 
-SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.json"))
-SESS_LOCK = threading.Lock()
-SESSIONS: Dict[str, Dict[str, Any]] = {}
-
-
-def sess_load():
-    global SESSIONS
-    try:
-        SESSIONS = helper.loads(Path(SESS_FILE).read_text(encoding="utf-8"))
-    except Exception:
-        SESSIONS = {}
-
-
-def sess_save():
-    with SESS_LOCK:
-        tmp = Path(SESS_FILE + ".tmp")
-        tmp.write_text(helper.dumps(SESSIONS), encoding="utf-8")
-        os.replace(tmp, SESS_FILE)
-
-
-sess_load()
-
-
-def get_session(req: Request) -> Dict[str, Any]:
+def get_sid(req: Request) -> str:
     sid = req.headers.get("id")
     if not sid:
         raise HTTPException(401, "missing session id")
-    s = SESSIONS.get(sid)
-    if s is None:
+    if sid not in sessions.read():
         raise HTTPException(401, "invalid session id")
-    return s
+    return sid
 
 
 @app.post("/session/new")
 async def session_new():
     sid = secrets.token_urlsafe(32)
-    SESSIONS[sid] = {}
-    sess_save()
+    sessions.lock(lambda m: m.setdefault(sid, {}))
     return JSONResponse({"id": sid})
 
 
@@ -132,9 +112,8 @@ async def register_begin(req: Request):
         user_verification=PREFERRED,
         resident_key_requirement=PREFERRED,
     )
-    s = get_session(req)
-    s["reg"] = {"u": username, "state": state}
-    sess_save()
+    sid = get_sid(req)
+    sessions.lock(lambda m: m.setdefault(sid, {}).update({"reg": {"u": username, "state": state}}))
     return JSONResponse(dict(opts))
 
 
@@ -142,21 +121,17 @@ async def register_begin(req: Request):
 async def register_complete(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip()
-    cred = body.get("credential") or {}
-    s = get_session(req)
+    sid = get_sid(req)
+    s = sessions.read().get(sid) or {}
     st = s.get("reg")
     if not st or st.get("u") != username:
         raise HTTPException(400, "registration state missing")
+    cred = body.get("credential") or {}
     res = server.register_complete(st["state"], cred)
     cd = res.credential_data
-    USERS[username]["credentials"].append({
-        "data": cd,
-        "sign_count": res.counter,
-        "transports": cred.get("response", {}).get("transports") or []
-    })
-    s.pop("reg", None)
-    sess_save()
-    users_save()
+    users.lock(lambda m: m[username]["credentials"].append(
+        {"data": cd, "sign_count": res.counter, "transports": cred.get("response", {}).get("transports") or []}))
+    sessions.lock(lambda m: m.get(sid, {}).pop("reg", None))
     return JSONResponse({"ok": True})
 
 
@@ -166,36 +141,34 @@ async def authenticate_begin(req: Request):
     username = (body.get("username") or "").strip() or None
     descriptors = None
     if username:
-        u = USERS.get(username)
+        u = users.read().get(username)
         if not u:
             raise HTTPException(404, "unknown user")
         descriptors = pk_descriptors(u)
     opts, state = server.authenticate_begin(descriptors, user_verification=PREFERRED)
-    s = get_session(req)
-    s["auth"] = {"state": state}
-    sess_save()
+    sid = get_sid(req)
+    sessions.lock(lambda m: m.setdefault(sid, {}).update({"auth": {"state": state}}))
     return JSONResponse(dict(opts))
 
 
 @app.post("/webauthn/authenticate-complete")
 async def authenticate_complete(req: Request):
     body = await req.json()
-    cred = body.get("credential") or {}
-    s = get_session(req)
+    sid = get_sid(req)
+    s = sessions.read().get(sid) or {}
     st = s.get("auth")
     if not st:
         raise HTTPException(400, "authentication state missing")
+    cred = body.get("credential") or {}
     raw_id = b64dec(cred.get("rawId") or cred.get("id"))
     uname = find_user_by_cred_id(raw_id)
     if not uname:
         raise HTTPException(404, "credential not recognized")
-    u = USERS[uname]
+    u = users.read()[uname]
     server.authenticate_complete(st["state"], [c["data"] for c in u["credentials"]], cred)
     ad = AuthenticatorData(b64dec(cred["response"]["authenticatorData"]))
-    update_counter(u, raw_id, ad.counter)
-    s.pop("auth", None)
-    sess_save()
-    users_save()
+    update_counter(uname, raw_id, ad.counter)
+    sessions.lock(lambda m: m.get(sid, {}).pop("auth", None))
     return JSONResponse({"ok": True, "username": uname})
 
 
