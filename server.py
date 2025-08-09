@@ -77,7 +77,7 @@ def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
             return
 
 
-SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.pickle"))
+SESS_FILE = os.getenv("SESS_FILE", os.path.join(os.path.dirname(__file__), "sessions.json"))
 SESS_LOCK = threading.Lock()
 SESSIONS: Dict[str, Dict[str, Any]] = {}
 
@@ -85,17 +85,15 @@ SESSIONS: Dict[str, Dict[str, Any]] = {}
 def sess_load():
     global SESSIONS
     try:
-        with open(SESS_FILE, "rb") as f:
-            SESSIONS = pickle.load(f)
+        SESSIONS = helper.loads(Path(SESS_FILE).read_text(encoding="utf-8"))
     except Exception:
         SESSIONS = {}
 
 
 def sess_save():
     with SESS_LOCK:
-        tmp = SESS_FILE + ".tmp"
-        with open(tmp, "wb") as f:
-            pickle.dump(SESSIONS, f, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp = Path(SESS_FILE + ".tmp")
+        tmp.write_text(helper.dumps(SESSIONS), encoding="utf-8")
         os.replace(tmp, SESS_FILE)
 
 
