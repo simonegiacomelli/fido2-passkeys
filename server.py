@@ -1,4 +1,4 @@
-import os, base64, secrets, pickle, threading
+import os, secrets, pickle, threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
@@ -60,18 +60,19 @@ def user_get_or_create(username: str, display_name: Optional[str]) -> Dict[str, 
 def find_user_by_cred_id(cred_id: bytes) -> Optional[str]:
     for uname, u in USERS.items():
         for c in u["credentials"]:
-            if c["id"] == cred_id: return uname
+            if c["data"].credential_id == cred_id:
+                return uname
     return None
 
 
 def pk_descriptors(u: Dict[str, Any]):
-    return [PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=c["id"]) for c in
+    return [PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=c["data"].credential_id) for c in
             u["credentials"]]
 
 
 def update_counter(u: Dict[str, Any], cred_id: bytes, counter: int):
     for c in u["credentials"]:
-        if c["id"] == cred_id:
+        if c["data"].credential_id == cred_id:
             c["sign_count"] = max(c.get("sign_count", 0), counter)
             return
 
@@ -103,9 +104,11 @@ sess_load()
 
 def get_session(req: Request) -> Dict[str, Any]:
     sid = req.headers.get("id")
-    if not sid: raise HTTPException(401, "missing session id")
+    if not sid:
+        raise HTTPException(401, "missing session id")
     s = SESSIONS.get(sid)
-    if s is None: raise HTTPException(401, "invalid session id")
+    if s is None:
+        raise HTTPException(401, "invalid session id")
     return s
 
 
@@ -122,11 +125,15 @@ async def register_begin(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip()
     display_name = (body.get("displayName") or "").strip() or None
-    if not username: raise HTTPException(400, "username required")
+    if not username:
+        raise HTTPException(400, "username required")
     u = user_get_or_create(username, display_name)
     opts, state = server.register_begin(
-        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]), pk_descriptors(u),
-        user_verification=PREFERRED, resident_key_requirement=PREFERRED)
+        PublicKeyCredentialUserEntity(name=u["name"], id=u["id"], display_name=u["displayName"]),
+        pk_descriptors(u),
+        user_verification=PREFERRED,
+        resident_key_requirement=PREFERRED,
+    )
     s = get_session(req)
     s["reg"] = {"u": username, "state": state}
     sess_save()
@@ -140,11 +147,15 @@ async def register_complete(req: Request):
     cred = body.get("credential") or {}
     s = get_session(req)
     st = s.get("reg")
-    if not st or st.get("u") != username: raise HTTPException(400, "registration state missing")
+    if not st or st.get("u") != username:
+        raise HTTPException(400, "registration state missing")
     res = server.register_complete(st["state"], cred)
     cd = res.credential_data
-    USERS[username]["credentials"].append({"id": cd.credential_id, "data": cd, "sign_count": res.counter,
-                                           "transports": cred.get("response", {}).get("transports") or []})
+    USERS[username]["credentials"].append({
+        "data": cd,
+        "sign_count": res.counter,
+        "transports": cred.get("response", {}).get("transports") or []
+    })
     s.pop("reg", None)
     sess_save()
     db_save()
@@ -158,7 +169,8 @@ async def authenticate_begin(req: Request):
     descriptors = None
     if username:
         u = USERS.get(username)
-        if not u: raise HTTPException(404, "unknown user")
+        if not u:
+            raise HTTPException(404, "unknown user")
         descriptors = pk_descriptors(u)
     opts, state = server.authenticate_begin(descriptors, user_verification=PREFERRED)
     s = get_session(req)
@@ -173,10 +185,12 @@ async def authenticate_complete(req: Request):
     cred = body.get("credential") or {}
     s = get_session(req)
     st = s.get("auth")
-    if not st: raise HTTPException(400, "authentication state missing")
+    if not st:
+        raise HTTPException(400, "authentication state missing")
     raw_id = b64dec(cred.get("rawId") or cred.get("id"))
     uname = find_user_by_cred_id(raw_id)
-    if not uname: raise HTTPException(404, "credential not recognized")
+    if not uname:
+        raise HTTPException(404, "credential not recognized")
     u = USERS[uname]
     server.authenticate_complete(st["state"], [c["data"] for c in u["credentials"]], cred)
     ad = AuthenticatorData(b64dec(cred["response"]["authenticatorData"]))
@@ -190,7 +204,8 @@ async def authenticate_complete(req: Request):
 @app.get("/", include_in_schema=False)
 async def index():
     path = os.path.join(os.path.dirname(__file__), "index.html")
-    if not os.path.exists(path): raise HTTPException(404, "index.html not found")
+    if not os.path.exists(path):
+        raise HTTPException(404, "index.html not found")
     return FileResponse(path, media_type="text/html")
 
 
