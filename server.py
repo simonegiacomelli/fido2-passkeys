@@ -162,10 +162,6 @@ async def authenticate_verify(req: Request):
     db_save()
     return JSONResponse({"ok": True, "username": uname})
 
-@app.get("/health")
-async def health():
-    return {"ok": True}
-
 @app.get("/", include_in_schema=False)
 async def index():
     path = os.path.join(os.path.dirname(__file__), "index.html")
