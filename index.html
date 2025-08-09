@@ -228,20 +228,20 @@
         const displayName = displayNameEl.value.trim() || username
         if (!username) return l('Username required')
         l('Requesting registration options…')
-        const opts = await postJSON('/webauthn/register-options', {username, displayName})
+        const opts = await postJSON('/webauthn/register-begin', {username, displayName})
         const pubKey = prepareCreateOptions(opts)
         l('Creating credential…')
         const cred = await navigator.credentials.create({publicKey: pubKey})
         const data = packAttestation(cred)
         l('Sending attestation…')
-        const res = await postJSON('/webauthn/register-verify', {username, credential: data})
+        const res = await postJSON('/webauthn/register-complete', {username, credential: data})
         l('Server verification:', JSON.stringify(res))
     }
 
     const signin = async withUsername => {
         const body = withUsername ? {username: usernameEl.value.trim()} : {}
         l('Requesting authentication options…')
-        const opts = await postJSON('/webauthn/authenticate-options', body)
+        const opts = await postJSON('/webauthn/authenticate-begin', body)
         const pubKey = prepareGetOptions(opts)
         const extra = {}
         if (!withUsername) extra.mediation = 'optional'
@@ -249,7 +249,7 @@
         const cred = await navigator.credentials.get({publicKey: pubKey, ...extra})
         const data = packAssertion(cred)
         l('Sending assertion…')
-        const res = await postJSON('/webauthn/authenticate-verify', {credential: data})
+        const res = await postJSON('/webauthn/authenticate-complete', {credential: data})
         l('Server verification:', JSON.stringify(res))
     }
 
