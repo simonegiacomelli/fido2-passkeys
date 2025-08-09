@@ -34,15 +34,12 @@ Notes:
 
 * **Registration**
 
-    * `POST /webauthn/register/options`
-    * `POST /webauthn/register/verify`
+    * `POST /webauthn/register-begin`
+    * `POST /webauthn/register-complete`
 * **Authentication**
 
-    * `POST /webauthn/authenticate/options`
-    * `POST /webauthn/authenticate/verify`
-* **Health**
-
-    * `GET /health`
+    * `POST /webauthn/authenticate-begin`
+    * `POST /webauthn/authenticate-complete`
 * **UI**
 
     * `GET /` → serves `index.html`
