@@ -11,11 +11,7 @@ import helper
 
 PREFERRED = UserVerificationRequirement.PREFERRED
 
-
-def b64ud(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
-
+b64dec = helper.b64dec
 
 RP_ID = os.getenv("RP_ID", "localhost")
 RP_NAME = os.getenv("RP_NAME", "Passkey Demo")
@@ -178,12 +174,12 @@ async def authenticate_complete(req: Request):
     s = get_session(req)
     st = s.get("auth")
     if not st: raise HTTPException(400, "authentication state missing")
-    raw_id = b64ud(cred.get("rawId") or cred.get("id"))
+    raw_id = b64dec(cred.get("rawId") or cred.get("id"))
     uname = find_user_by_cred_id(raw_id)
     if not uname: raise HTTPException(404, "credential not recognized")
     u = USERS[uname]
     server.authenticate_complete(st["state"], [c["data"] for c in u["credentials"]], cred)
-    ad = AuthenticatorData(b64ud(cred["response"]["authenticatorData"]))
+    ad = AuthenticatorData(b64dec(cred["response"]["authenticatorData"]))
     update_counter(u, raw_id, ad.counter)
     s.pop("auth", None)
     sess_save()
