@@ -99,7 +99,7 @@ async def session_new():
     sess_save()
     return JSONResponse({"id": sid})
 
-@app.post("/webauthn/register/options")
+@app.post("/webauthn/register-options")
 async def register_options(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip()
@@ -112,7 +112,7 @@ async def register_options(req: Request):
     sess_save()
     return JSONResponse(dict(opts))
 
-@app.post("/webauthn/register/verify")
+@app.post("/webauthn/register-verify")
 async def register_verify(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip()
@@ -128,7 +128,7 @@ async def register_verify(req: Request):
     db_save()
     return JSONResponse({"ok": True})
 
-@app.post("/webauthn/authenticate/options")
+@app.post("/webauthn/authenticate-options")
 async def authenticate_options(req: Request):
     body = await req.json()
     username = (body.get("username") or "").strip() or None
@@ -143,7 +143,7 @@ async def authenticate_options(req: Request):
     sess_save()
     return JSONResponse(dict(opts))
 
-@app.post("/webauthn/authenticate/verify")
+@app.post("/webauthn/authenticate-verify")
 async def authenticate_verify(req: Request):
     body = await req.json()
     cred = body.get("credential") or {}
