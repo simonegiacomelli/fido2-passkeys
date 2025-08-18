@@ -61,3 +61,7 @@ The server validates challenges and origins, stores credential data, and updates
 * Robust origin/RP ID configuration
 * Database storage and migrations
 * Auditing, logging, and rate limiting
+
+## TODO
+* Cleanup the 4 key methods to make them simpler and the 'code reads like well-written prose'
+* Ask ChatGPT to add a UML mermaid.js diagram to explain passkeys to someone with zero knowledge about it
